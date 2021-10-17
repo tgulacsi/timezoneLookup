@@ -12,6 +12,7 @@ import (
 	"os"
 
 	"github.com/evanoberholster/timezoneLookup/pb"
+	"github.com/fxamacker/cbor/v2"
 	json "github.com/goccy/go-json"
 	"github.com/klauspost/compress/snappy"
 	"github.com/vmihailenco/msgpack/v5"
@@ -76,6 +77,8 @@ func (e encoding) String() string {
 		return "json"
 	case EncProtobuf:
 		return "protobuf"
+	case EncCBOR:
+		return "cbor"
 	default:
 		return "unknown"
 	}
@@ -88,6 +91,8 @@ func EncodingFromString(s string) (encoding, error) {
 		return EncJSON, nil
 	case "protobuf":
 		return EncProtobuf, nil
+	case "cbor":
+		return EncCBOR, nil
 	default:
 		return EncUnknown, fmt.Errorf("unknown encoding %q (neither msgpack, nor json)", s)
 	}
@@ -98,6 +103,7 @@ var (
 	EncMsgPack  = encoding{1}
 	EncJSON     = encoding{2}
 	EncProtobuf = encoding{3}
+	EncCBOR     = encoding{4}
 )
 
 func (s *Store) LoadTimezones() error {
@@ -126,6 +132,10 @@ func (s *Store) LoadTimezones() error {
 			}
 			index.FromPB(&pbIndex)
 			return nil
+		}
+	case EncCBOR:
+		U = func(index *PolygonIndex, v []byte) error {
+			return cbor.Unmarshal(v, index)
 		}
 	}
 	// Load polygon indexes
@@ -254,6 +264,19 @@ func (s *Store) InsertPolygons(tz Timezone) error {
 			bufIndex, err := mo.MarshalAppend(bufIndex[:0], &pbIndex)
 			return bufPolygon, bufIndex, err
 		}
+	case EncCBOR:
+		pBuf, iBuf := bytes.NewBuffer(bufPolygon), bytes.NewBuffer(bufIndex)
+		eP := cbor.NewEncoder(pBuf)
+		eI := cbor.NewEncoder(iBuf)
+		E = func(polygon Polygon, index PolygonIndex) ([]byte, []byte, error) {
+			pBuf.Reset()
+			if err := eP.Encode(polygon); err != nil {
+				return nil, nil, err
+			}
+			iBuf.Reset()
+			err := eI.Encode(index)
+			return pBuf.Bytes(), iBuf.Bytes(), err
+		}
 	}
 	for _, polygon := range tz.Polygons {
 		if err := s.db.Update(func(tx *bolt.Tx) error {
@@ -309,6 +332,10 @@ func (s *Store) loadPolygon(id uint64) (Polygon, error) {
 			}
 			polygon.FromPB(&pbPoly)
 			return nil
+		}
+	case EncCBOR:
+		U = func(polygon *Polygon, v []byte) error {
+			return cbor.Unmarshal(v, polygon)
 		}
 	}
 	var polygon Polygon
