@@ -11,12 +11,16 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/evanoberholster/timezoneLookup/fb"
 	"github.com/evanoberholster/timezoneLookup/pb"
 	json "github.com/goccy/go-json"
+	flatbuffers "github.com/google/flatbuffers/go"
 )
 
 //go:generate go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 //go:generate protoc --proto_path=pb --go_out=pb --go_opt=paths=source_relative pb/timezone.proto
+
+//go:generate flatc --go --gen-onefile -o fb/ --go-namespace fb fb/timezone.fbs
 
 const (
 	WithSnappy = true
@@ -63,6 +67,35 @@ type Polygon struct {
 	Coords []Coord `json:"coords"`
 }
 
+func (dst *Polygon) FromFB(src *fb.Polygon) {
+	var c fb.Coord
+	dst.Max.FromFB(src.Max(&c))
+	dst.Min.FromFB(src.Min(&c))
+	length := src.CoordsLength()
+	if cap(dst.Coords) < length {
+		dst.Coords = make([]Coord, length)
+	} else {
+		dst.Coords = dst.Coords[:length]
+	}
+	for i := 0; i < length; i++ {
+		src.Coords(&c, i)
+		dst.Coords[i].FromFB(&c)
+	}
+}
+func (src Polygon) ToFB(dst *fb.Polygon) {
+	b := flatbuffers.NewBuilder(512)
+	fb.PolygonStart(b)
+	fb.PolygonAddMax(b, fb.CreateCoord(b, src.Max.Lat, src.Max.Lon))
+	fb.PolygonAddMin(b, fb.CreateCoord(b, src.Min.Lat, src.Min.Lon))
+	fb.PolygonStartCoordsVector(b, len(src.Coords))
+	for _, c := range src.Coords {
+		fb.CreateCoord(b, c.Lat, c.Lon)
+	}
+	off := fb.PolygonEnd(b)
+	b.Finish(off)
+	dst.Init(b.FinishedBytes(), off)
+}
+
 func (dst *Polygon) FromPB(src *pb.Polygon) {
 	dst.Max.FromPB(src.Max)
 	dst.Min.FromPB(src.Min)
@@ -104,6 +137,17 @@ func (src Coord) ToPB(dst *pb.Coord) *pb.Coord {
 }
 func (dst *Coord) FromPB(src *pb.Coord) {
 	dst.Lat, dst.Lon = src.Lat, src.Lon
+}
+
+func (src Coord) ToFB(dst *fb.Coord) *fb.Coord {
+	b := flatbuffers.NewBuilder(16)
+	off := fb.CreateCoord(b, src.Lat, src.Lon)
+	b.Finish(off)
+	dst.Init(b.FinishedBytes(), off)
+	return dst
+}
+func (dst *Coord) FromFB(src *fb.Coord) {
+	dst.Lat, dst.Lon = src.Lat(), src.Lon()
 }
 
 type Config struct {

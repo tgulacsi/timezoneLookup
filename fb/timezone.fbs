@@ -1,0 +1,25 @@
+// Copyright 2021 Tamás Gulácsi. 
+//
+// SPDX-License-Identifier: MIT
+
+namespace Timezone;
+
+struct Coord {
+  lat:float;
+  lon:float;
+}
+
+table Polygon {
+  max:Coord;
+  min:Coord;
+  coords:[Coord];
+}
+
+table PolygonIndex {
+  id:uint64;
+  tzid:string;
+  max:Coord;
+  min:Coord;
+}
+
+root_type PolygonIndex;
