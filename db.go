@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 
+	xdr "github.com/davecgh/go-xdr/xdr2"
 	"github.com/evanoberholster/timezoneLookup/pb"
 	json "github.com/goccy/go-json"
 	"github.com/klauspost/compress/snappy"
@@ -76,6 +77,8 @@ func (e encoding) String() string {
 		return "json"
 	case EncProtobuf:
 		return "protobuf"
+	case EncXDR:
+		return "xdr"
 	default:
 		return "unknown"
 	}
@@ -88,6 +91,8 @@ func EncodingFromString(s string) (encoding, error) {
 		return EncJSON, nil
 	case "protobuf":
 		return EncProtobuf, nil
+	case "xdr":
+		return EncXDR, nil
 	default:
 		return EncUnknown, fmt.Errorf("unknown encoding %q (neither msgpack, nor json)", s)
 	}
@@ -98,6 +103,7 @@ var (
 	EncMsgPack  = encoding{1}
 	EncJSON     = encoding{2}
 	EncProtobuf = encoding{3}
+	EncXDR      = encoding{5}
 )
 
 func (s *Store) LoadTimezones() error {
@@ -126,6 +132,11 @@ func (s *Store) LoadTimezones() error {
 			}
 			index.FromPB(&pbIndex)
 			return nil
+		}
+	case EncXDR:
+		U = func(index *PolygonIndex, v []byte) error {
+			_, err := xdr.Unmarshal(bytes.NewReader(v), index)
+			return err
 		}
 	}
 	// Load polygon indexes
@@ -254,6 +265,19 @@ func (s *Store) InsertPolygons(tz Timezone) error {
 			bufIndex, err := mo.MarshalAppend(bufIndex[:0], &pbIndex)
 			return bufPolygon, bufIndex, err
 		}
+	case EncXDR:
+		pBuf, iBuf := bytes.NewBuffer(bufPolygon), bytes.NewBuffer(bufIndex)
+		eP := xdr.NewEncoder(pBuf)
+		eI := xdr.NewEncoder(iBuf)
+		E = func(polygon Polygon, index PolygonIndex) ([]byte, []byte, error) {
+			pBuf.Reset()
+			if _, err := eP.Encode(polygon); err != nil {
+				return nil, nil, err
+			}
+			iBuf.Reset()
+			_, err := eI.Encode(index)
+			return pBuf.Bytes(), iBuf.Bytes(), err
+		}
 	}
 	for _, polygon := range tz.Polygons {
 		if err := s.db.Update(func(tx *bolt.Tx) error {
@@ -309,6 +333,11 @@ func (s *Store) loadPolygon(id uint64) (Polygon, error) {
 			}
 			polygon.FromPB(&pbPoly)
 			return nil
+		}
+	case EncXDR:
+		U = func(polygon *Polygon, v []byte) error {
+			_, err := xdr.Unmarshal(bytes.NewReader(v), polygon)
+			return err
 		}
 	}
 	var polygon Polygon
